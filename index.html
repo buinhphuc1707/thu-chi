@@ -191,7 +191,7 @@ const RULES={
     ['chuyen',['chuyen tien','chuyen khoan',' ck ','ibft','ib ft',' chuyen']]
   ],
   thu:[
-    ['luong',['luong','salary','payroll']],
+    ['luong',['hiventy','luong','salary','payroll']],   // Lương của bạn do Hiventy Asia Company Limited chuyển
     ['thuong',['thuong','bonus']],
     ['tietkiem',['lai tien gui','tra lai','tat toan','lai tiet kiem']],
     ['hoantien',['hoan tien','refund','cashback','hoan tra']],
@@ -268,10 +268,12 @@ if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catc
 
 /* ---------- Zalo / bank message parser ---------- */
 const NUM='(\\d{1,3}(?:[.,]\\d{3})+|\\d+)(?:[.,]\\d{1,2}(?!\\d))?';
-const SIGNED=new RegExp('(?:^|[\\s:|(\\[])([+-])\\s?'+NUM+'\\s?(vnd|vnđ|đ|d\\b|dong)?','g');
+// Dấu +/- rồi số tiền; chữ VND có thể đứng trước ("+ VND 2,199,321") hoặc sau ("-150,000 VND")
+// Nhóm: 1 = dấu, 2 = VND đứng trước, 3 = số tiền, 4 = VND đứng sau
+const SIGNED=new RegExp('(?:^|[\\s:|(\\[])([+-])\\s?(vnd|vnđ)?\\s?'+NUM+'\\s?(vnd|vnđ|đ|d\\b|dong)?','g');
 const toNum=s=>Number(s.replace(/[.,]/g,''));
 const START=/^\s*(?:\[[^\]]{0,30}\]\s*)?(TK|Tài khoản|Tai khoan|STK|Số dư TK|So du TK|SD TK|Biến động|Bien dong|Thông báo|Thong bao|Quý khách|Quy khach|Bạn vừa|Ban vua|Bạn đã|Ban da)/i;
-function hasSigned(line){SIGNED.lastIndex=0;const n=norm(line);let m;while((m=SIGNED.exec(n)))if(m[3]||toNum(m[2])>=1000)return true;return false}
+function hasSigned(line){SIGNED.lastIndex=0;const n=norm(line);let m;while((m=SIGNED.exec(n)))if(m[2]||m[4]||toNum(m[3])>=1000)return true;return false}
 // Dòng chỉ có tên ngân hàng (VD: "TECHCOMBANK") = đầu một tin mới
 const isBankHeader=line=>{const n=norm(line).trim();return n.length<=25&&BANKS.some(([,re])=>re.test(n))&&!/\d{3}/.test(n)};
 function splitMessages(text){
@@ -286,12 +288,13 @@ function splitMessages(text){
   }
   const out=[];
   for(const b of merged){
-    let cur=[],curHas=false;
+    let cur=[],curHas=false,curBal=false;
     for(const line of b.split('\n')){
       if(!line.trim())continue;
       const h=hasSigned(line);
-      if(cur.length&&curHas&&(h||START.test(line)||isBankHeader(line))){out.push(cur.join('\n'));cur=[];curHas=false}
-      cur.push(line);curHas=curHas||h;
+      // Tin mới bắt đầu khi: gặp số tiền +/- mới, hoặc gặp dòng mở đầu (Tài khoản…, TECHCOMBANK) sau khi tin trước đã có dòng Số dư
+      if(cur.length&&curHas&&(h||(curBal&&(START.test(line)||isBankHeader(line))))){out.push(cur.join('\n'));cur=[];curHas=false;curBal=false}
+      cur.push(line);curHas=curHas||h;curBal=curBal||/^\s*(?:số dư|so du|sd)\b/i.test(norm(line));
     }
     if(cur.length)out.push(cur.join('\n'));
   }
@@ -304,12 +307,12 @@ function parseOne(raw,at){
   while((m=SIGNED.exec(n))){
     const before=n.slice(Math.max(0,m.index-14),m.index+1);
     if(/(so du|sd|sdc|balance|bal)\s*:?\s*.?$/.test(before))continue;
-    cands.push({sign:m[1],v:toNum(m[2]),cur:!!m[3]});
+    cands.push({sign:m[1],v:toNum(m[3]),cur:!!(m[2]||m[4])});
   }
   const c=cands.find(x=>x.cur&&x.v>0)||cands.find(x=>x.v>=1000);
   if(c){type=c.sign==='+'?'thu':'chi';amount=c.v}
   else{
-    const n2=n.replace(/(so du(?: kha dung| cuoi| tai khoan)?|sdc|sd|balance|bal)\s*[:\-]?\s*[\d.,]+/g,' ');
+    const n2=n.replace(/(so du(?: kha dung| cuoi| tai khoan)?|sdc|sd|balance|bal)\s*[:\-]?\s*(?:vnd\s*)?[\d.,]+/g,' ');
     const BIG='(\\d{1,3}(?:[.,]\\d{3})+|\\d{4,})(?:[.,]\\d{1,2}(?!\\d))?(?![\\d\\/])';
     const m2=n2.match(new RegExp('(?:so tien(?: gd| giao dich)?|\\bgd|\\bps|amount|giao dich)\\s*[:\\-]?\\s*'+BIG))||n2.match(new RegExp(NUM+'\\s?(?:vnd|vnđ|dong|d)\\b'));
     if(m2){
@@ -346,12 +349,12 @@ function parseOne(raw,at){
   // Tin nhiều dòng không có nhãn "Nội dung:" (VD SMS Techcombank) → lấy các dòng không phải tài khoản/số tiền/số dư
   if(!note&&raw.trim().includes('\n')){
     const LBL=/^(?:\[.*\]$|Tài khoản|Tai khoan|Số tài khoản|So tai khoan|TK\b|STK\b|Số tiền|So tien|Số dư|So du|SD\b|Thời gian|Thoi gian|Ngày GD|Ngay GD)/i;
-    const rest=raw.split('\n').map(s=>s.trim()).filter(s=>s&&!LBL.test(s)&&!isBankHeader(s)&&!/^[+-]?\s?[\d.,]+\s*(?:VND|VNĐ|đ)?$/i.test(s));
+    const rest=raw.split('\n').map(s=>s.trim()).filter(s=>s&&!LBL.test(s)&&!isBankHeader(s)&&!/^[+-]?\s?(?:VND|VNĐ)?\s?[\d.,]+\s*(?:VND|VNĐ|đ)?$/i.test(s));
     if(rest.length)note=rest.join(' ').replace(/[.\s]*\b(?:Ma tham chieu|Mã tham chiếu|Ma GD|Mã GD|Ref)\b.*$/i,'').replace(/[.;,\s]+$/,'').slice(0,140);
   }
   if(!note){const fr=one.match(/\b(?:từ|tu|đến|den|tại|tai)\s+([^.,|]{3,60})/i);if(fr)note=fr[0].trim()}
   // 4 số cuối tài khoản / thẻ — dùng để nhớ ngân hàng khi tin không ghi tên ngân hàng
-  const am=one.match(/(?:Số tài khoản|So tai khoan|Tài khoản|Tai khoan|STK|TK)\s*[:：]?\s*([\dxX*.]{4,})/i);
+  const am=one.match(/(?:Số tài khoản|So tai khoan|Tài khoản|Tai khoan|STK|TK)(?:\s+(?:thanh toán|thanh toan))?\s*[:：]?\s*([\dxX*.]{4,})/i);
   const acct=am?(am[1].replace(/\D/g,'').slice(-4)):'';
   let bank='';for(const [name,re] of BANKS)if(re.test(n)){bank=name;break}
   if(!bank&&acct){const prev=db.tx.find(x=>x.acct===acct&&x.bank);if(prev)bank=prev.bank}
