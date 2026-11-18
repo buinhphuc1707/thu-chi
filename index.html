@@ -689,14 +689,14 @@ function applySync(items){
       if(db.tx.some(t=>t.syncId===it.id))continue;
       for(const ch of splitMessages(it.text)){
         const p=parseOne(ch,at);
-        if(!p){failed.push({at:it.at,text:ch});continue}
+        if(!p){failed.push({id:it.id,kind:'sms',at:it.at,text:ch});continue}
         if(isDup(p))continue;
         db.tx.push({id:uid(),source:'sms',syncId:it.id,created:Date.now(),type:p.type,amount:p.amount,cat:p.cat,date:p.date,time:p.time,note:p.note,bank:p.bank,acct:p.acct,raw:p.raw});tx++;
       }
     }else if(it.kind==='cake'){
       if(db.savings.some(s=>s.syncId===it.id))continue;
       const s=parseCake(it.text,at);
-      if(!s){failed.push({at:it.at,text:it.text.slice(0,300)});continue}
+      if(!s){failed.push({id:it.id,kind:'cake',at:it.at,text:it.text.slice(0,3000)});continue}
       if(s.close){db.savings.filter(x=>x.ref===s.ref&&!x.closed).forEach(x=>{x.closed=true;x.closedDate=s.date;x.syncCloseId=it.id;sv++});continue}
       if(db.savings.some(x=>x.ref&&x.ref===s.ref&&x.start===s.start))continue;
       // Sổ cũ cùng số sổ đã tái tục → đánh dấu đã tất toán
@@ -772,7 +772,7 @@ function syncSheet(){
     <div class="field"><label>Mã bí mật (TOKEN)</label><input id="syTok" value="${esc(c.token||'')}" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
     <button class="btn" id="sySave">Lưu &amp; đồng bộ ngay</button>
     <div class="preview"><div class="kv"><span>Lần đồng bộ gần nhất</span><span>${ago}</span></div>${c.err?`<div class="kv"><span>Lỗi</span><span class="out">${esc(c.err)}</span></div>`:''}${(c.pendingDel||[]).length?`<div class="kv"><span>Chờ xóa trên Sheet</span><span>${c.pendingDel.length} dòng</span></div>`:''}${c.delErr?`<div class="kv"><span>Lỗi xóa</span><span class="out">${esc(c.delErr)}</span></div>`:''}</div>
-    ${(c.fails||[]).length?`<details class="raw"><summary>${c.fails.length} tin không đọc được — gửi mẫu cho người hỗ trợ để bổ sung</summary>${c.fails.map(f=>`<pre>${esc(f.text)}</pre>`).join('')}<button class="btn ghost" id="syClr">Xóa danh sách này</button></details>`:''}
+    ${(c.fails||[]).length?`<details class="raw"><summary>${c.fails.length} tin không đọc được — gửi mẫu cho người hỗ trợ để bổ sung</summary>${c.fails.map(f=>`<pre>${esc(f.text)}</pre>`).join('')}<button class="btn" id="syRe">Đọc lại các tin này</button><button class="btn ghost" id="syClr">Xóa danh sách này</button></details>`:''}
     ${c.url?'<button class="btn danger" id="syOff">Tắt đồng bộ</button>':''}`,sh=>{
     sh.querySelector('#sySave').onclick=async()=>{
       const url=sh.querySelector('#syUrl').value.trim(),token=sh.querySelector('#syTok').value.trim();
@@ -782,6 +782,19 @@ function syncSheet(){
       const r=await syncNow(true);if(r){closeSheet()}
     };
     const clr=sh.querySelector('#syClr');if(clr)clr.onclick=()=>{const c2=syncCfg();c2.fails=[];setSyncCfg(c2);closeSheet()};
+    // Sau khi app được cập nhật bộ đọc tin: đọc lại những tin trước đây không đọc được
+    const re=sh.querySelector('#syRe');if(re)re.onclick=()=>{
+      const c2=syncCfg();const left=[];let n=0;
+      for(const f of c2.fails||[]){
+        const at=new Date(f.at||Date.now());
+        if(f.kind==='cake'){const s=parseCake(f.text,at);if(!s||s.close){left.push(f);continue}
+          if(!db.savings.some(x=>x.ref&&x.ref===s.ref&&x.start===s.start)){db.savings.push({...s,id:uid(),syncId:f.id,created:Date.now()});n++}continue}
+        const p=parseOne(f.text,at);if(!p){left.push(f);continue}
+        if(!isDup(p)){db.tx.push({id:uid(),source:'sms',syncId:f.id,created:Date.now(),type:p.type,amount:p.amount,cat:p.cat,date:p.date,time:p.time,note:p.note,bank:p.bank,acct:p.acct,raw:p.raw});n++}
+      }
+      c2.fails=left;setSyncCfg(c2);save();closeSheet();render();
+      toast(n?`Đã thêm ${n} mục`+(left.length?` · còn ${left.length} tin chưa đọc được`:''):(left.length?'Vẫn chưa đọc được — hãy gửi mẫu tin để bổ sung':'Không có mục mới'));
+    };
     const off=sh.querySelector('#syOff');if(off)off.onclick=()=>{if(confirm('Tắt đồng bộ tự động?')){setSyncCfg({});closeSheet();toast('Đã tắt đồng bộ')}};
   });
 }
