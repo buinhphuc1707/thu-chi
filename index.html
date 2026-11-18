@@ -453,7 +453,8 @@ function txForm(t){
       if(isNew)db.tx.push({id:uid(),source:'manual',created:Date.now(),...rec});else Object.assign(t,rec);
       save();closeSheet();if(ui.tab==='thu'||ui.tab==='chi')ui.tab=type;ui.month=ymOf(rec.date);render();toast(isNew?'Đã thêm':'Đã cập nhật');
     };
-    const del=sh.querySelector('#fDel');if(del)del.onclick=()=>{if(!confirm('Xóa giao dịch này?'))return;db.tx=db.tx.filter(x=>x.id!==t.id);save();closeSheet();render();toast('Đã xóa')};
+    const del=sh.querySelector('#fDel');if(del)del.onclick=()=>{if(!confirm('Xóa giao dịch này?'))return;db.tx=db.tx.filter(x=>x.id!==t.id);save();
+      if(t.syncId&&!db.tx.some(x=>x.syncId===t.syncId))queueRemoteDelete([t.syncId]);closeSheet();render();toast('Đã xóa')};
     if(isNew)setTimeout(()=>amt.focus(),300);
   });
 }
@@ -526,7 +527,8 @@ function savingForm(s){
       if(!r.bank){toast('Hãy nhập tên ngân hàng');return}if(!r.amount){toast('Hãy nhập số tiền gửi');return}if(!r.rate){toast('Hãy nhập lãi suất');return}
       if(isNew)db.savings.push({...r,id:uid(),created:Date.now()});else Object.assign(s,r);
       save();closeSheet();render();toast(isNew?'Đã thêm sổ':'Đã cập nhật')};
-    const del=g('#sDel');if(del)del.onclick=()=>{if(!confirm('Xóa sổ tiết kiệm này?'))return;db.savings=db.savings.filter(x=>x.id!==s.id);save();closeSheet();render();toast('Đã xóa')};
+    const del=g('#sDel');if(del)del.onclick=()=>{if(!confirm('Xóa sổ tiết kiệm này?'))return;db.savings=db.savings.filter(x=>x.id!==s.id);save();
+      queueRemoteDelete([s.syncId,s.syncCloseId].filter(Boolean));closeSheet();render();toast('Đã xóa')};
   });
 }
 
@@ -585,7 +587,7 @@ function settingsSheet(){
         download(`thuchi-${stamp}.csv`,'﻿'+rows.map(r=>r.map(q).join(',')).join('\r\n'),'text/csv')}
       if(a==='restore')$('#fileIn').click();
       if(a==='sync'){closeSheet();setTimeout(syncSheet,280)}
-      if(a==='wipe'&&confirm('Xóa TOÀN BỘ giao dịch và sổ tiết kiệm? Không thể hoàn tác.')&&confirm('Bạn chắc chắn chứ?')){db={tx:[],savings:[],seen:db.seen||[]};save();closeSheet();render();toast('Đã xóa toàn bộ')}
+      if(a==='wipe'&&confirm('Xóa TOÀN BỘ giao dịch và sổ tiết kiệm? Không thể hoàn tác.')&&confirm('Bạn chắc chắn chứ?')){const ids=[...db.tx.map(t=>t.syncId),...db.savings.flatMap(s=>[s.syncId,s.syncCloseId])].filter(Boolean);db={tx:[],savings:[],seen:db.seen||[]};save();queueRemoteDelete(ids);closeSheet();render();toast('Đã xóa toàn bộ')}
     };
   });
 }
@@ -661,6 +663,38 @@ function applySync(items){
   if(changed)save();
   return {tx,sv,failed};
 }
+/* Xóa trong app → đánh dấu "Đã xóa" trong Google Sheet (nếu mất mạng thì để dành, gửi ở lần đồng bộ sau) */
+const apiUrl=(c,q)=>c.url+(c.url.includes('?')?'&':'?')+'token='+encodeURIComponent(c.token)+'&'+q;
+function queueRemoteDelete(ids){
+  const c=syncCfg();if(!c.url||!ids.length)return;
+  c.pendingDel=[...new Set([...(c.pendingDel||[]),...ids])];setSyncCfg(c);
+  flushDeletes();
+}
+let flushing=false;
+async function flushDeletes(){
+  const c=syncCfg();const ids=c.pendingDel||[];
+  if(!c.url||!ids.length||flushing)return;
+  flushing=true;
+  try{
+    for(let i=0;i<ids.length;i+=40){
+      const part=ids.slice(i,i+40);
+      const r=await fetch(apiUrl(c,'action=delete&ids='+encodeURIComponent(part.join(','))),{cache:'no-store'});
+      const d=await r.json();
+      if(!d.ok||d.deleted===undefined)throw new Error('Máy chủ chưa hỗ trợ xóa (hãy triển khai lại Code.gs)');
+      const c2=syncCfg();c2.pendingDel=(c2.pendingDel||[]).filter(x=>!part.includes(x));c2.delErr='';setSyncCfg(c2);
+    }
+  }catch(e){const c2=syncCfg();c2.delErr=e.message;setSyncCfg(c2)}
+  finally{flushing=false}
+}
+// Một lần: các tin đã nhận nhưng không còn trong app (đã xóa trước khi có tính năng này) → đánh dấu trong Sheet
+function queueOrphans(){
+  const c=syncCfg();if(c.orphansDone||!c.url)return;
+  const used=new Set([...db.tx.map(t=>t.syncId),...db.savings.flatMap(s=>[s.syncId,s.syncCloseId])].filter(Boolean));
+  const orphans=(db.seen||[]).filter(id=>!used.has(id));
+  c.orphansDone=true;setSyncCfg(c);
+  queueRemoteDelete(orphans);
+}
+
 let syncing=false;
 async function syncNow(manual){
   const c=syncCfg();
@@ -668,11 +702,13 @@ async function syncNow(manual){
   if(syncing||(!manual&&c.lastTry&&Date.now()-c.lastTry<60000))return;
   syncing=true;c.lastTry=Date.now();setSyncCfg(c);
   try{
-    const u=c.url+(c.url.includes('?')?'&':'?')+'token='+encodeURIComponent(c.token)+'&since='+Math.max(0,(c.since||0)-36e5); // lùi 1 giờ cho chắc; trùng lặp đã được lọc theo ID
+    await flushDeletes();
+    const u=apiUrl(c,'since='+Math.max(0,(c.since||0)-36e5)); // lùi 1 giờ cho chắc; trùng lặp đã được lọc theo ID
     const r=await fetch(u,{cache:'no-store'});
     const d=await r.json();
     if(!d.ok)throw new Error(d.error||'Lỗi máy chủ');
     const items=d.items||[];const res=applySync(items);
+    queueOrphans();
     const c2=syncCfg();
     c2.since=Math.max(c2.since||0,...items.map(i=>i.at));c2.lastOk=Date.now();c2.err='';
     c2.fails=(c2.fails||[]).concat(res.failed).slice(-20);setSyncCfg(c2);
@@ -690,7 +726,7 @@ function syncSheet(){
     <div class="field" style="margin-top:0"><label>Địa chỉ Web App</label><input id="syUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(c.url||'')}" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
     <div class="field"><label>Mã bí mật (TOKEN)</label><input id="syTok" value="${esc(c.token||'')}" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
     <button class="btn" id="sySave">Lưu &amp; đồng bộ ngay</button>
-    <div class="preview"><div class="kv"><span>Lần đồng bộ gần nhất</span><span>${ago}</span></div>${c.err?`<div class="kv"><span>Lỗi</span><span class="out">${esc(c.err)}</span></div>`:''}</div>
+    <div class="preview"><div class="kv"><span>Lần đồng bộ gần nhất</span><span>${ago}</span></div>${c.err?`<div class="kv"><span>Lỗi</span><span class="out">${esc(c.err)}</span></div>`:''}${(c.pendingDel||[]).length?`<div class="kv"><span>Chờ xóa trên Sheet</span><span>${c.pendingDel.length} dòng</span></div>`:''}${c.delErr?`<div class="kv"><span>Lỗi xóa</span><span class="out">${esc(c.delErr)}</span></div>`:''}</div>
     ${(c.fails||[]).length?`<details class="raw"><summary>${c.fails.length} tin không đọc được — gửi mẫu cho người hỗ trợ để bổ sung</summary>${c.fails.map(f=>`<pre>${esc(f.text)}</pre>`).join('')}<button class="btn ghost" id="syClr">Xóa danh sách này</button></details>`:''}
     ${c.url?'<button class="btn danger" id="syOff">Tắt đồng bộ</button>':''}`,sh=>{
     sh.querySelector('#sySave').onclick=async()=>{

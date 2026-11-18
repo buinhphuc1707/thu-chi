@@ -1,6 +1,6 @@
 // Bộ nhớ đệm để ứng dụng mở được cả khi không có mạng.
 // Khi sửa index.html, tăng số phiên bản bên dưới (v2, v3, ...).
-const CACHE = 'thuchi-v3';
+const CACHE = 'thuchi-v4';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => {
