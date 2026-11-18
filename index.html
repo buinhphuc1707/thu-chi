@@ -143,7 +143,7 @@ details.raw pre{white-space:pre-wrap;background:var(--soft);padding:10px;border-
 <body>
 <header class="top">
   <h1 id="title">Chi</h1>
-  <button class="iconbtn" id="pasteBtn" data-act="paste" aria-label="Dán tin nhắn Zalo"><svg class="i" viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M9 11h6M9 15h4"/></svg></button>
+  <button class="iconbtn" id="pasteBtn" data-act="paste" aria-label="Dán tin nhắn ngân hàng"><svg class="i" viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M9 11h6M9 15h4"/></svg></button>
   <button class="iconbtn" data-act="settings" aria-label="Cài đặt"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
 </header>
 <main id="main"></main>
@@ -377,7 +377,7 @@ function render(){
 const monthNav=label=>`<div class="mnav"><button class="iconbtn sm" data-act="prev" aria-label="Trước">‹</button><span>${label}</span><button class="iconbtn sm" data-act="next" aria-label="Sau">›</button></div>`;
 const byTime=(a,b)=>(b.date+(b.time||'')).localeCompare(a.date+(a.time||''));
 function itemHTML(t){const c=catOf(t.type,t.cat);
-  return `<button class="item" data-act="edit" data-id="${t.id}"><span class="ic">${c[2]}</span><span class="grow"><span class="t1">${esc(t.note||c[1])}</span><span class="t2">${esc(c[1])}${t.time?' · '+t.time:''}${t.bank?' · '+esc(t.bank):''}${t.source==='zalo'?' · Zalo':t.source==='sms'?' · Tự động':''}</span></span><span class="amt ${t.type==='thu'?'in':''}">${t.type==='thu'?'+':'−'}${fmt(t.amount)}</span></button>`}
+  return `<button class="item" data-act="edit" data-id="${t.id}"><span class="ic">${c[2]}</span><span class="grow"><span class="t1">${esc(t.note||c[1])}</span><span class="t2">${esc(c[1])}${t.time?' · '+t.time:''}${t.bank?' · '+esc(t.bank):''}${t.source==='zalo'?' · Dán tin':t.source==='sms'?' · Tự động':''}</span></span><span class="amt ${t.type==='thu'?'in':''}">${t.type==='thu'?'+':'−'}${fmt(t.amount)}</span></button>`}
 function viewList(type){
   const p=periodOf(ui.anchor);
   const all=db.tx.filter(t=>inP(t,p));
@@ -386,7 +386,7 @@ function viewList(type){
   let h=monthNav(periodLabel(p));
   h+=`<section class="hero"><div class="label">Tổng ${type} ${pWord()} này</div><div class="big ${type==='thu'?'in':''}">${money(type==='thu'?tin:tout)}</div>
   <div class="mini"><span>Thu <b class="in">${short(tin)}</b></span><span>Chi <b>${short(tout)}</b></span><span>Còn lại <b class="${tin-tout<0?'out':''}">${short(tin-tout)}</b></span></div></section>`;
-  if(!list.length)return h+`<div class="empty"><div class="e">${type==='thu'?'↙':'↗'}</div>Chưa có khoản ${type} nào trong ${pWord()} này.<br><small>Nhấn + để nhập tay, hoặc biểu tượng 📋 để dán tin nhắn Zalo.</small></div>`;
+  if(!list.length)return h+`<div class="empty"><div class="e">${type==='thu'?'↙':'↗'}</div>Chưa có khoản ${type} nào trong ${pWord()} này.<br><small>Nhấn + để nhập tay, hoặc biểu tượng 📋 để dán tin nhắn ngân hàng.</small></div>`;
   const groups={};list.forEach(t=>(groups[t.date]=groups[t.date]||[]).push(t));
   for(const d of Object.keys(groups)){const g=groups[d];
     h+=`<div class="group-h"><span>${dayLabel(d)}</span><span>${type==='thu'?'+':'−'}${fmt(sum(g))}</span></div><div class="list">${g.map(itemHTML).join('')}</div>`}
@@ -494,8 +494,8 @@ function txForm(t){
 
 function pasteSheet(){
   let items=[];
-  openSheet(head('Nhập từ tin nhắn Zalo')+`
-    <p class="hint">Trong Zalo, nhấn giữ tin nhắn biến động số dư → <b>Sao chép</b>, rồi quay lại đây. Có thể dán nhiều tin một lúc (mỗi tin cách nhau một dòng trống).</p>
+  openSheet(head('Dán tin nhắn ngân hàng')+`
+    <p class="hint">Trong <b>Tin nhắn (SMS)</b> hoặc <b>Zalo</b>, nhấn giữ tin biến động số dư → <b>Sao chép</b>, rồi quay lại đây. Có thể dán nhiều tin một lúc (mỗi tin cách nhau một dòng trống).</p>
     <button class="btn ghost" id="pClip" style="margin-top:0">📋 Dán từ bộ nhớ tạm</button>
     <div class="field"><textarea id="pText" placeholder="VD: TK 1234xxx789 -150,000 VND luc 18/11/2026 12:05. SD: 5,200,000 VND. ND: GRABFOOD"></textarea></div>
     <button class="btn" id="pRun">Đọc tin nhắn</button>
@@ -628,7 +628,7 @@ function settingsSheet(){
       const stamp=todayISO();
       if(a==='backup')download(`thuchi-saoluu-${stamp}.json`,JSON.stringify({app:'thuchi',version:1,exported:new Date().toISOString(),...db},null,1),'application/json');
       if(a==='csv'){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
-        const rows=[['Ngày','Giờ','Loại','Danh mục','Số tiền','Ghi chú','Ngân hàng','Nguồn']].concat([...db.tx].sort(byTime).reverse().map(t=>[dmy(t.date),t.time,t.type==='thu'?'Thu':'Chi',catOf(t.type,t.cat)[1],t.amount,t.note,t.bank,t.source==='zalo'?'Zalo':t.source==='sms'?'Tự động (SMS)':'Nhập tay']));
+        const rows=[['Ngày','Giờ','Loại','Danh mục','Số tiền','Ghi chú','Ngân hàng','Nguồn']].concat([...db.tx].sort(byTime).reverse().map(t=>[dmy(t.date),t.time,t.type==='thu'?'Thu':'Chi',catOf(t.type,t.cat)[1],t.amount,t.note,t.bank,t.source==='zalo'?'Dán tin nhắn':t.source==='sms'?'Tự động (SMS)':'Nhập tay']));
         download(`thuchi-${stamp}.csv`,'﻿'+rows.map(r=>r.map(q).join(',')).join('\r\n'),'text/csv')}
       if(a==='restore')$('#fileIn').click();
       if(a==='sync'){closeSheet();setTimeout(syncSheet,280)}
@@ -746,7 +746,7 @@ const LKEY=KEY+'.ledger';
 function ledgerSent(){try{return JSON.parse(localStorage.getItem(LKEY))||{}}catch(e){return {}}}
 function ledgerRow(t){const c=catOf(t.type,t.cat);
   return {id:t.id,date:t.date,time:t.time||'',type:t.type==='thu'?'Thu':'Chi',cat:c[1],amount:t.amount,note:t.note||'',bank:t.bank||'',
-    source:t.source==='zalo'?'Dán tin Zalo':t.source==='sms'?'Tự động (SMS)':'Nhập tay'}}
+    source:t.source==='zalo'?'Dán tin nhắn':t.source==='sms'?'Tự động (SMS)':'Nhập tay'}}
 let ledgerTimer=null,ledgerBusy=false;
 function scheduleLedger(){clearTimeout(ledgerTimer);ledgerTimer=setTimeout(flushLedger,1500)}
 async function flushLedger(){
