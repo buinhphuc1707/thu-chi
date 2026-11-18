@@ -230,7 +230,7 @@ const daysBetween=(a,b)=>{const p=s=>{const [y,m,d]=s.split('-').map(Number);ret
 const pctFmt=r=>String(r).replace('.',',')+'%';
 
 /* ---------- storage ---------- */
-function load(){try{const d=JSON.parse(localStorage.getItem(KEY));if(d&&Array.isArray(d.tx))return {tx:d.tx,savings:d.savings||[]}}catch(e){}return {tx:[],savings:[]}}
+function load(){try{const d=JSON.parse(localStorage.getItem(KEY));if(d&&Array.isArray(d.tx))return {tx:d.tx,savings:d.savings||[],seen:d.seen||[]}}catch(e){}return {tx:[],savings:[],seen:[]}}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){toast('Không lưu được dữ liệu!')}}
 let db=load();
 let ui={tab:'chi',month:ymOf(todayISO()),rpMode:'month'};
@@ -585,14 +585,14 @@ function settingsSheet(){
         download(`thuchi-${stamp}.csv`,'﻿'+rows.map(r=>r.map(q).join(',')).join('\r\n'),'text/csv')}
       if(a==='restore')$('#fileIn').click();
       if(a==='sync'){closeSheet();setTimeout(syncSheet,280)}
-      if(a==='wipe'&&confirm('Xóa TOÀN BỘ giao dịch và sổ tiết kiệm? Không thể hoàn tác.')&&confirm('Bạn chắc chắn chứ?')){db={tx:[],savings:[]};save();closeSheet();render();toast('Đã xóa toàn bộ')}
+      if(a==='wipe'&&confirm('Xóa TOÀN BỘ giao dịch và sổ tiết kiệm? Không thể hoàn tác.')&&confirm('Bạn chắc chắn chứ?')){db={tx:[],savings:[],seen:db.seen||[]};save();closeSheet();render();toast('Đã xóa toàn bộ')}
     };
   });
 }
 $('#fileIn').onchange=e=>{const f=e.target.files[0];e.target.value='';if(!f)return;
   f.text().then(txt=>{const d=JSON.parse(txt);if(!d||!Array.isArray(d.tx))throw 0;
     if(!confirm(`Khôi phục ${d.tx.length} giao dịch và ${(d.savings||[]).length} sổ? Dữ liệu hiện tại sẽ được thay thế.`))return;
-    db={tx:d.tx,savings:d.savings||[]};save();closeSheet();render();toast('Đã khôi phục')}).catch(()=>toast('File sao lưu không hợp lệ'))};
+    db={tx:d.tx,savings:d.savings||[],seen:[...new Set([...(db.seen||[]),...(d.seen||[])])]};save();closeSheet();render();toast('Đã khôi phục')}).catch(()=>toast('File sao lưu không hợp lệ'))};
 async function download(name,text,mime){
   const blob=new Blob([text],{type:mime});
   if(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)&&navigator.canShare){const file=new File([blob],name,{type:mime});
@@ -632,7 +632,11 @@ function syncCfg(){try{return JSON.parse(localStorage.getItem(SKEY))||{}}catch(e
 function setSyncCfg(c){try{localStorage.setItem(SKEY,JSON.stringify(c))}catch(e){}}
 function applySync(items){
   let tx=0,sv=0;const failed=[];
+  // Ghi nhớ mọi tin đã xử lý: giao dịch bạn xóa trong app sẽ không bị đồng bộ thêm lại
+  db.seen=db.seen||[];const seen=new Set(db.seen);let changed=false;
   for(const it of [...items].sort((a,b)=>a.at-b.at)){
+    if(seen.has(it.id))continue;
+    seen.add(it.id);db.seen.push(it.id);changed=true;
     const at=new Date(it.at);
     if(it.kind==='sms'){
       if(db.tx.some(t=>t.syncId===it.id))continue;
@@ -653,7 +657,8 @@ function applySync(items){
       db.savings.push({...s,id:uid(),syncId:it.id,created:Date.now()});sv++;
     }
   }
-  if(tx||sv)save();
+  if(db.seen.length>5000)db.seen=db.seen.slice(-5000);
+  if(changed)save();
   return {tx,sv,failed};
 }
 let syncing=false;
