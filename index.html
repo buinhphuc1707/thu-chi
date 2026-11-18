@@ -231,7 +231,7 @@ const pctFmt=r=>String(r).replace('.',',')+'%';
 
 /* ---------- storage ---------- */
 function load(){try{const d=JSON.parse(localStorage.getItem(KEY));if(d&&Array.isArray(d.tx))return {tx:d.tx,savings:d.savings||[],seen:d.seen||[]}}catch(e){}return {tx:[],savings:[],seen:[]}}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){toast('Không lưu được dữ liệu!')}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){toast('Không lưu được dữ liệu!')}scheduleLedger()}
 let db=load();
 let ui={tab:'chi',anchor:todayISO(),rpMode:'month'};
 
@@ -740,6 +740,38 @@ function queueOrphans(){
   queueRemoteDelete(orphans);
 }
 
+/* Sổ thu chi trên Google Sheet (trang "SoThuChi"): app so sánh với lần gửi trước,
+   chỉ gửi giao dịch mới / đã sửa, và báo xóa những giao dịch đã xóa trong app. */
+const LKEY=KEY+'.ledger';
+function ledgerSent(){try{return JSON.parse(localStorage.getItem(LKEY))||{}}catch(e){return {}}}
+function ledgerRow(t){const c=catOf(t.type,t.cat);
+  return {id:t.id,date:t.date,time:t.time||'',type:t.type==='thu'?'Thu':'Chi',cat:c[1],amount:t.amount,note:t.note||'',bank:t.bank||'',
+    source:t.source==='zalo'?'Dán tin Zalo':t.source==='sms'?'Tự động (SMS)':'Nhập tay'}}
+let ledgerTimer=null,ledgerBusy=false;
+function scheduleLedger(){clearTimeout(ledgerTimer);ledgerTimer=setTimeout(flushLedger,1500)}
+async function flushLedger(){
+  const c=syncCfg();if(!c.url||!c.token||ledgerBusy)return;
+  ledgerBusy=true;
+  try{
+    const sent=ledgerSent(),now={},ups=[];
+    for(const t of db.tx){const r=ledgerRow(t),h=JSON.stringify(r);now[t.id]=h;if(sent[t.id]!==h)ups.push(r)}
+    const rem=Object.keys(sent).filter(id=>!(id in now));
+    if(!ups.length&&!rem.length)return;
+    const batches=[];for(let i=0;i<ups.length;i+=300)batches.push(ups.slice(i,i+300));
+    if(!batches.length)batches.push([]);
+    for(let b=0;b<batches.length;b++){
+      const part=batches[b],rmv=b===0?rem:[];
+      const r=await fetch(c.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:c.token,action:'ledger',upserts:part,removes:rmv})});
+      let d={};try{d=await r.json()}catch(e){}
+      if(!d.ok||!d.ledger)throw new Error(d.error&&!/nội dung/i.test(d.error)?d.error:'Máy chủ chưa hỗ trợ Sổ thu chi (hãy triển khai lại Code.gs)');
+      const s2=ledgerSent();part.forEach(x=>s2[x.id]=now[x.id]);rmv.forEach(id=>delete s2[id]);
+      try{localStorage.setItem(LKEY,JSON.stringify(s2))}catch(e){}
+    }
+    const c2=syncCfg();c2.ledgerErr='';c2.ledgerOk=Date.now();setSyncCfg(c2);
+  }catch(e){const c2=syncCfg();c2.ledgerErr=e.message||'Không gửi được';setSyncCfg(c2)}
+  finally{ledgerBusy=false}
+}
+
 let syncing=false;
 async function syncNow(manual){
   const c=syncCfg();
@@ -753,7 +785,7 @@ async function syncNow(manual){
     const d=await r.json();
     if(!d.ok)throw new Error(d.error||'Lỗi máy chủ');
     const items=d.items||[];const res=applySync(items);
-    queueOrphans();
+    queueOrphans();flushLedger();
     const c2=syncCfg();
     c2.since=Math.max(c2.since||0,...items.map(i=>i.at));c2.lastOk=Date.now();c2.err='';
     c2.fails=(c2.fails||[]).concat(res.failed).slice(-20);setSyncCfg(c2);
@@ -771,7 +803,9 @@ function syncSheet(){
     <div class="field" style="margin-top:0"><label>Địa chỉ Web App</label><input id="syUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(c.url||'')}" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
     <div class="field"><label>Mã bí mật (TOKEN)</label><input id="syTok" value="${esc(c.token||'')}" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
     <button class="btn" id="sySave">Lưu &amp; đồng bộ ngay</button>
-    <div class="preview"><div class="kv"><span>Lần đồng bộ gần nhất</span><span>${ago}</span></div>${c.err?`<div class="kv"><span>Lỗi</span><span class="out">${esc(c.err)}</span></div>`:''}${(c.pendingDel||[]).length?`<div class="kv"><span>Chờ xóa trên Sheet</span><span>${c.pendingDel.length} dòng</span></div>`:''}${c.delErr?`<div class="kv"><span>Lỗi xóa</span><span class="out">${esc(c.delErr)}</span></div>`:''}</div>
+    <div class="preview"><div class="kv"><span>Lần đồng bộ gần nhất</span><span>${ago}</span></div>${c.err?`<div class="kv"><span>Lỗi</span><span class="out">${esc(c.err)}</span></div>`:''}${(c.pendingDel||[]).length?`<div class="kv"><span>Chờ xóa trên Sheet</span><span>${c.pendingDel.length} dòng</span></div>`:''}${c.delErr?`<div class="kv"><span>Lỗi xóa</span><span class="out">${esc(c.delErr)}</span></div>`:''}
+      <div class="kv"><span>Sổ thu chi trên Sheet</span><span>${c.ledgerErr?'<span class="out">Lỗi</span>':c.ledgerOk?'Đã khớp lúc '+new Date(c.ledgerOk).toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}):'Chưa gửi'}</span></div>
+      ${c.ledgerErr?`<div class="kv"><span></span><span class="out" style="font-size:12.5px">${esc(c.ledgerErr)}</span></div>`:''}</div>
     ${(c.fails||[]).length?`<details class="raw"><summary>${c.fails.length} tin không đọc được — gửi mẫu cho người hỗ trợ để bổ sung</summary>${c.fails.map(f=>`<pre>${esc(f.text)}</pre>`).join('')}<button class="btn" id="syRe">Đọc lại các tin này</button><button class="btn ghost" id="syClr">Xóa danh sách này</button></details>`:''}
     ${c.url?'<button class="btn danger" id="syOff">Tắt đồng bộ</button>':''}`,sh=>{
     sh.querySelector('#sySave').onclick=async()=>{
